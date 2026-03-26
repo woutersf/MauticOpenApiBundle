@@ -68,3 +68,7 @@ The spec is generated at runtime so the `servers.url` always reflects the curren
 ## License
 
 [GNU GPL v3](https://www.gnu.org/licenses/gpl-3.0.html): same as Mautic.
+
+---
+
+Built by [Dropsolid](https://dropsolid.ai)
