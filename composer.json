@@ -1,15 +1,27 @@
 {
-    "name": "mautic/openapi-bundle",
+    "name": "woutersf/mautic-openapi-bundle",
     "description": "Exposes a public OpenAPI 3.1.0 specification endpoint and Swagger UI viewer for the Mautic REST API.",
     "type": "mautic-plugin",
     "version": "1.0.0",
+    "license": "MIT",
     "keywords": ["mautic", "plugin", "openapi", "swagger", "api-docs"],
+    "homepage": "https://github.com/woutersf/MauticOpenApiBundle",
+    "authors": [
+        {
+            "name": "Dropsolid",
+            "homepage": "https://dropsolid.com"
+        }
+    ],
     "require": {
-        "php": ">=8.1"
+        "php": ">=8.1",
+        "composer/installers": "^1.0 || ^2.0"
     },
     "autoload": {
         "psr-4": {
             "MauticPlugin\\MauticOpenApiBundle\\": ""
         }
+    },
+    "extra": {
+        "installer-name": "MauticOpenApiBundle"
     }
 }
