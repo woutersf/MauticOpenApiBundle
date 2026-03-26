@@ -9,8 +9,10 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\PluginBundle\Helper\IntegrationHelper;
 use MauticPlugin\MauticOpenApiBundle\Service\OpenApiSpecService;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Security\Core\Authorization\AuthorizationCheckerInterface;
 use Symfony\Component\Yaml\Yaml;
 
 class OpenApiController extends CommonController
@@ -18,9 +20,10 @@ class OpenApiController extends CommonController
     public static function getSubscribedServices(): array
     {
         return array_merge(parent::getSubscribedServices(), [
-            'mautic.helper.core_parameters' => CoreParametersHelper::class,
-            'mautic.openapi.service.spec'   => OpenApiSpecService::class,
-            'mautic.helper.integration'     => IntegrationHelper::class,
+            'mautic.helper.core_parameters'  => CoreParametersHelper::class,
+            'mautic.openapi.service.spec'    => OpenApiSpecService::class,
+            'mautic.helper.integration'      => IntegrationHelper::class,
+            'security.authorization_checker' => AuthorizationCheckerInterface::class,
         ]);
     }
 
@@ -47,6 +50,26 @@ class OpenApiController extends CommonController
         $coreParams = $this->container->get('mautic.helper.core_parameters');
 
         return (bool) $coreParams->get('api_enabled', false);
+    }
+
+    /**
+     * Returns true when the spec should be served:
+     * - always, when openapi_public = true
+     * - only for authenticated Mautic users, when openapi_public = false
+     */
+    private function isPublicOrAuthenticated(): bool
+    {
+        /** @var CoreParametersHelper $coreParams */
+        $coreParams = $this->container->get('mautic.helper.core_parameters');
+
+        if ((bool) $coreParams->get('openapi_public', true)) {
+            return true;
+        }
+
+        /** @var AuthorizationCheckerInterface $auth */
+        $auth = $this->container->get('security.authorization_checker');
+
+        return $auth->isGranted('IS_AUTHENTICATED_FULLY');
     }
 
     private function unavailableJsonResponse(): JsonResponse
@@ -110,6 +133,20 @@ class OpenApiController extends CommonController
             return $this->unavailableJsonResponse();
         }
 
+        if (!$this->isPublicOrAuthenticated()) {
+            return new JsonResponse(
+                [
+                    'error'   => 'unauthorized',
+                    'message' => 'Authentication required. Log in to Mautic to access the OpenAPI specification.',
+                ],
+                Response::HTTP_UNAUTHORIZED,
+                [
+                    'WWW-Authenticate'            => 'Bearer realm="Mautic"',
+                    'Access-Control-Allow-Origin' => '*',
+                ]
+            );
+        }
+
         /** @var OpenApiSpecService $specService */
         $specService = $this->container->get('mautic.openapi.service.spec');
         $spec        = $specService->getSpec();
@@ -149,6 +186,10 @@ class OpenApiController extends CommonController
     {
         if (!$this->isAvailable()) {
             return $this->unavailableHtmlResponse();
+        }
+
+        if (!$this->isPublicOrAuthenticated()) {
+            return new RedirectResponse($this->generateUrl('login'));
         }
 
         $specUrl = $request->getSchemeAndHttpHost()

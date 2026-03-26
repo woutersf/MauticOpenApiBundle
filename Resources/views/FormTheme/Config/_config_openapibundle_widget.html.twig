@@ -1,0 +1,11 @@
+{% block openapibundleconfig_widget %}
+    <div class="col-md-4">
+        {{ form_row(form.openapi_public) }}
+    </div>
+    <div class="col-md-8">
+        <p class="help-block" style="margin-top:2.2rem;">
+            <strong>Yes</strong> — <code>/openapi</code> and <code>/openapi/view</code> are accessible without login.<br>
+            <strong>No</strong> — <code>/openapi</code> returns <code>401 Unauthorized</code> and <code>/openapi/view</code> redirects to the Mautic login page.
+        </p>
+    </div>
+{% endblock %}

@@ -24,7 +24,22 @@ return [
         ],
     ],
 
+    'parameters' => [
+        'openapi_public' => true,
+    ],
+
     'services' => [
+        'events' => [
+            'mautic.openapi.config.subscriber' => [
+                'class' => \MauticPlugin\MauticOpenApiBundle\EventListener\ConfigSubscriber::class,
+            ],
+        ],
+        'forms' => [
+            'mautic.openapi.form.type.config' => [
+                'class' => \MauticPlugin\MauticOpenApiBundle\Form\Type\ConfigType::class,
+                'tags'  => ['form.type'],
+            ],
+        ],
         'other' => [
             'mautic.openapi.service.spec' => [
                 'class'     => \MauticPlugin\MauticOpenApiBundle\Service\OpenApiSpecService::class,
