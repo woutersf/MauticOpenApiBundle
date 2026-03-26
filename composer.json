@@ -1,0 +1,15 @@
+{
+    "name": "mautic/openapi-bundle",
+    "description": "Exposes a public OpenAPI 3.1.0 specification endpoint and Swagger UI viewer for the Mautic REST API.",
+    "type": "mautic-plugin",
+    "version": "1.0.0",
+    "keywords": ["mautic", "plugin", "openapi", "swagger", "api-docs"],
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "MauticPlugin\\MauticOpenApiBundle\\": ""
+        }
+    }
+}
