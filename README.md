@@ -21,7 +21,7 @@ A Mautic plugin that generates and exposes an **OpenAPI 3.1.0 specification** fo
 Copy `MauticOpenApiBundle/` into your Mautic `plugins/` directory, then clear the cache:
 
 ```bash
-php bin/console cache:clear --env=prod -d memory_limit=512M
+php bin/console cache:clear
 ```
 
 Go to **Settings → Plugins**, find **OpenAPI Specification** and enable it.
@@ -48,15 +48,6 @@ Under **Configuration → OpenAPI Settings**:
 
 The OpenAPI spec documents all standard Mautic REST API resources:
 
-**CRM**: Contacts, Companies, Segments
-**Campaigns**: Campaigns, Emails, Forms, Landing Pages, Dynamic Content
-**Assets & Content**: Assets, Notifications, Marketing Messages
-**Configuration**: Custom Fields (contact + company), Tags, Categories
-**Users**: Users, Roles
-**Reporting**: Reports, Stats
-**Scoring**: Points, Point Triggers
-
-Authentication schemes: **HTTP Basic Auth** and **OAuth 2.0** (Authorization Code + Client Credentials).
 
 ## Swagger UI
 
