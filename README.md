@@ -78,6 +78,12 @@ operations have their own path suffix:
 `POST /api/contacts` does not exist. Earlier versions of this plugin described
 the API as if it did.
 
+Batch delete is the one exception to the JSON body rule. It takes its IDs in
+the query string (`?ids=1,2,3` or `?ids[]=1&ids[]=2`) because
+`CommonApiController::deleteEntitiesAction()` reads `$request->query`. A JSON
+body is ignored and the call still answers 200, so sending one deletes nothing
+and reports success. Batch create and batch edit do use a JSON body.
+
 ### Excluded
 
 Routes under `/api/v2` are served by API Platform, which publishes its own

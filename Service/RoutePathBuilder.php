@@ -384,6 +384,10 @@ class RoutePathBuilder
             $parameters = array_merge($parameters, $this->paginationParameters());
         }
 
+        if ('deleteEntitiesAction' === $route['action']) {
+            $parameters[] = $this->batchDeleteParameter();
+        }
+
         if ([] !== $parameters) {
             $operation['parameters'] = $parameters;
         }
@@ -541,6 +545,25 @@ class RoutePathBuilder
     }
 
     /**
+     * Batch delete takes its IDs in the query string, not in a request body.
+     * CommonApiController::deleteEntitiesAction() reads $request->query, so a
+     * JSON body is silently ignored: the call answers 200 and deletes nothing.
+     *
+     * @return array<string, mixed>
+     */
+    private function batchDeleteParameter(): array
+    {
+        return [
+            'name'        => 'ids',
+            'in'          => 'query',
+            'required'    => true,
+            'description' => 'IDs of the records to delete, as a comma separated list (?ids=1,2,3) or as repeated values (?ids[]=1&ids[]=2). A request body is ignored.',
+            'schema'      => ['type' => 'string'],
+            'example'     => '1,2,3',
+        ];
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     private function paginationParameters(): array
@@ -574,15 +597,10 @@ class RoutePathBuilder
             return $this->jsonBody($refs['input'] ?? $refs['entity'], true);
         }
 
+        // deleteEntitiesAction reads $request->query, never the body. It is given
+        // an "ids" query parameter instead, see batchDeleteParameter().
         if ('deleteEntitiesAction' === $action) {
-            return [
-                'required' => true,
-                'content'  => ['application/json' => ['schema' => [
-                    'type'        => 'array',
-                    'description' => 'IDs of the records to delete',
-                    'items'       => ['type' => 'integer'],
-                ]]],
-            ];
+            return null;
         }
 
         if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {

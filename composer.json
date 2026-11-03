@@ -2,7 +2,7 @@
     "name": "woutersf/mautic-openapi-bundle",
     "description": "Exposes a public OpenAPI 3.1.0 specification endpoint and Swagger UI viewer for the Mautic REST API. Paths are generated from the live routing table. Mautic 7 branch.",
     "type": "mautic-plugin",
-    "version": "7.0.0",
+    "version": "7.0.1",
     "license": "MIT",
     "keywords": ["mautic", "plugin", "openapi", "swagger", "api-docs"],
     "homepage": "https://github.com/woutersf/MauticOpenApiBundle",
