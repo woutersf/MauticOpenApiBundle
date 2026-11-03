@@ -41,10 +41,18 @@ return [
             ],
         ],
         'other' => [
+            'mautic.openapi.service.route_path_builder' => [
+                'class'     => \MauticPlugin\MauticOpenApiBundle\Service\RoutePathBuilder::class,
+                'arguments' => [
+                    'router',
+                    'service_container',
+                ],
+            ],
             'mautic.openapi.service.spec' => [
                 'class'     => \MauticPlugin\MauticOpenApiBundle\Service\OpenApiSpecService::class,
                 'arguments' => [
                     'mautic.helper.core_parameters',
+                    'mautic.openapi.service.route_path_builder',
                 ],
             ],
         ],
@@ -55,7 +63,6 @@ return [
                     'event_dispatcher',
                     'mautic.helper.cache_storage',
                     'doctrine.orm.entity_manager',
-                    'session',
                     'request_stack',
                     'router',
                     'translator',
@@ -68,6 +75,7 @@ return [
                     'mautic.lead.model.field',
                     'mautic.plugin.model.integration_entity',
                     'mautic.lead.model.dnc',
+                    'mautic.lead.field.fields_with_unique_identifier',
                 ],
             ],
         ],

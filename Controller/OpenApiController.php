@@ -161,7 +161,7 @@ class OpenApiController extends CommonController
             || str_contains($accept, 'application/x-yaml');
 
         if ($wantsYaml) {
-            $yaml = Yaml::dump($spec, 20, 2, Yaml::DUMP_NULL_AS_TILDE | Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE);
+            $yaml = Yaml::dump($spec, 20, 2, Yaml::DUMP_NULL_AS_TILDE | Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE | Yaml::DUMP_OBJECT_AS_MAP);
 
             return new Response($yaml, Response::HTTP_OK, [
                 'Content-Type'                => 'application/yaml; charset=utf-8',
