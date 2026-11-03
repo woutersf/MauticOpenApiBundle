@@ -2,6 +2,9 @@
 
 A Mautic plugin that generates and exposes an **OpenAPI 3.1.0 specification** for the Mautic REST API, with a built-in **Swagger UI** explorer.
 
+> **This is the `7.x` branch, for Mautic 7.** Paths and tags are generated from
+> the instance's own routing table. For Mautic 4 and 5, use the `main` branch.
+
 ## Features
 
 - Serves the full **OpenAPI 3.1.0** spec at `/openapi` (JSON or YAML)
@@ -12,7 +15,7 @@ A Mautic plugin that generates and exposes an **OpenAPI 3.1.0 specification** fo
 
 ## Requirements
 
-- Mautic 4.x or 5.x
+- Mautic 7.x (verified against 7.2.2). For Mautic 4.x and 5.x, use the `main` branch
 - PHP 8.1+
 - Mautic REST API enabled (**Configuration → API Settings**)
 
@@ -46,7 +49,54 @@ Under **Configuration → OpenAPI Settings**:
 
 ## API coverage
 
-The OpenAPI spec documents all standard Mautic REST API resources:
+Paths, HTTP methods, path parameters and tags are generated from this
+instance's Symfony routing table every time the spec is requested. The document
+therefore describes exactly the endpoints that are reachable here, including
+endpoints contributed by plugins, and it cannot drift when Mautic is upgraded or
+a plugin is enabled.
+
+Response and request schemas are curated in `Service/OpenApiSpecService.php` and
+linked to each route through the API controller's `$entityClass`. Routes whose
+entity has no curated schema are documented with a generic object body, so they
+appear in the spec instead of being left out.
+
+### What this fixes
+
+Mautic's legacy API does not use REST verbs on the collection URL. Write
+operations have their own path suffix:
+
+| Operation | Path | Method |
+|---|---|---|
+| Create | `/api/contacts/new` | POST |
+| Replace | `/api/contacts/{id}/edit` | PUT |
+| Update | `/api/contacts/{id}/edit` | PATCH |
+| Delete | `/api/contacts/{id}/delete` | DELETE |
+| Batch create | `/api/contacts/batch/new` | POST |
+| Batch update | `/api/contacts/batch/edit` | PUT or PATCH |
+| Batch delete | `/api/contacts/batch/delete` | DELETE |
+
+`POST /api/contacts` does not exist. Earlier versions of this plugin described
+the API as if it did.
+
+### Excluded
+
+Routes under `/api/v2` are served by API Platform, which publishes its own
+OpenAPI document at `/api/v2/docs.json`. They are skipped here to avoid
+describing the same endpoints twice, and the spec description points readers to
+that document.
+
+## Verifying the spec
+
+Compare the generated document against the router:
+
+```bash
+ddev exec php bin/console debug:router --format=json > /tmp/routes.json
+curl -s https://your-mautic/openapi > /tmp/spec.json
+```
+
+Every `(path, method)` pair under `/api` that is not under `/api/v2` should
+appear exactly once in `paths`, and no operation should describe a route that
+the router does not have.
 
 
 ## Swagger UI
@@ -60,7 +110,9 @@ The `/openapi/view` page loads [Swagger UI v5](https://swagger.io/tools/swagger-
 
 ## About the spec
 
-The spec is generated at runtime so the `servers.url` always reflects the current Mautic instance URL. Format negotiation supports:
+The spec is generated at runtime, so `servers.url` reflects the current Mautic
+instance URL, `info.version` reports the running Mautic version, and the paths
+match the routes this instance serves. Format negotiation supports:
 
 - Query param: `?format=yaml`
 - Accept header: `application/yaml`, `text/yaml`, `application/x-yaml`

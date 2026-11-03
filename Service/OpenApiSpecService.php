@@ -9,13 +9,23 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 /**
  * Builds a comprehensive OpenAPI 3.1.0 specification for the Mautic REST API.
  *
- * The spec is assembled from static definitions; the server URL is injected
- * dynamically from the Mautic site_url configuration value.
+ * Paths and tags are generated from the live Symfony routing table, so the
+ * document always matches the endpoints this instance actually serves,
+ * including endpoints contributed by plugins. Schemas and prose are curated
+ * here. The server URL comes from the Mautic site_url configuration value.
  */
 class OpenApiSpecService
 {
+    /**
+     * Cached result of the single path/tag generation pass.
+     *
+     * @var array{paths: array<string, array<string, mixed>>, tags: list<array{name: string, description: string}>}|null
+     */
+    private ?array $generated = null;
+
     public function __construct(
         private readonly CoreParametersHelper $coreParams,
+        private readonly RoutePathBuilder $pathBuilder,
     ) {
     }
 
@@ -50,9 +60,33 @@ class OpenApiSpecService
     {
         return [
             'title'       => 'Mautic REST API',
-            'version'     => '4.0',
+            'version'     => defined('MAUTIC_VERSION') ? MAUTIC_VERSION : '0.0.0',
             'description' => <<<'MD'
 The **Mautic REST API** lets you read and write Mautic data programmatically.
+
+Every path and method in this document is generated from the routing table of
+this instance, so it describes the endpoints that are actually available here.
+
+## Write operations use explicit route suffixes
+
+Mautic does not use REST verbs on the collection URL. Creating, updating and
+deleting each have their own path:
+
+| Operation | Path | Method |
+|---|---|---|
+| Create | `/contacts/new` | POST |
+| Replace | `/contacts/{id}/edit` | PUT |
+| Update | `/contacts/{id}/edit` | PATCH |
+| Delete | `/contacts/{id}/delete` | DELETE |
+| Batch create | `/contacts/batch/new` | POST |
+| Batch update | `/contacts/batch/edit` | PUT or PATCH |
+| Batch delete | `/contacts/batch/delete` | DELETE |
+
+`POST /contacts` does not exist and returns 405. The same pattern applies to
+every resource in this document.
+
+PUT replaces the record and creates it when no record with that ID exists.
+PATCH updates only the fields you send.
 
 ## Authentication
 
@@ -99,6 +133,13 @@ Resources are returned as an object keyed by string ID (not an array):
   ]
 }
 ```
+
+## API Platform endpoints
+
+This instance also serves a second API under `/api/v2`, built with API Platform.
+Those endpoints are not described here. API Platform publishes its own OpenAPI
+document for them at `/api/v2/docs.json`, which requires the same authentication
+as the rest of the API.
 MD,
             'contact'     => [
                 'name' => 'Mautic Community',
@@ -117,1040 +158,33 @@ MD,
     }
 
     // -------------------------------------------------------------------------
-    // Tags (grouping in Swagger UI)
+    // Tags and paths, generated from the live routing table
     // -------------------------------------------------------------------------
 
+    /**
+     * @return list<array{name: string, description: string}>
+     */
     private function buildTags(): array
     {
-        return [
-            ['name' => 'Contacts',         'description' => 'Manage contacts (leads)'],
-            ['name' => 'Companies',         'description' => 'Manage companies and company-contact relationships'],
-            ['name' => 'Segments',          'description' => 'Manage contact segments (lists)'],
-            ['name' => 'Campaigns',         'description' => 'Manage campaigns and campaign membership'],
-            ['name' => 'Emails',            'description' => 'Manage email assets and send emails'],
-            ['name' => 'Forms',             'description' => 'Manage forms and form submissions'],
-            ['name' => 'Landing Pages',     'description' => 'Manage landing pages'],
-            ['name' => 'Assets',            'description' => 'Manage file assets (documents, images, etc.)'],
-            ['name' => 'Tags',              'description' => 'Manage contact tags'],
-            ['name' => 'Categories',        'description' => 'Manage categories'],
-            ['name' => 'Custom Fields',     'description' => 'Read contact and company custom fields'],
-            ['name' => 'Notes',             'description' => 'Manage contact notes'],
-            ['name' => 'Users',             'description' => 'Manage Mautic users'],
-            ['name' => 'Roles',             'description' => 'Manage user roles and permissions'],
-            ['name' => 'Reports',           'description' => 'Access reports'],
-            ['name' => 'Stats',             'description' => 'Access raw table statistics'],
-            ['name' => 'Notifications',     'description' => 'Manage web push notifications'],
-            ['name' => 'Messages',          'description' => 'Manage marketing messages (multi-channel)'],
-            ['name' => 'Points',            'description' => 'Manage point actions and triggers'],
-            ['name' => 'Dynamic Content',   'description' => 'Manage dynamic web content blocks'],
-        ];
+        return $this->generated()['tags'];
     }
 
-    // -------------------------------------------------------------------------
-    // Paths – delegates to per-resource helpers
-    // -------------------------------------------------------------------------
-
+    /**
+     * @return array<string, array<string, mixed>>
+     */
     private function buildPaths(): array
     {
-        return array_merge(
-            $this->contactPaths(),
-            $this->companyPaths(),
-            $this->segmentPaths(),
-            $this->campaignPaths(),
-            $this->emailPaths(),
-            $this->formPaths(),
-            $this->pagePaths(),
-            $this->assetPaths(),
-            $this->tagPaths(),
-            $this->categoryPaths(),
-            $this->fieldPaths(),
-            $this->notePaths(),
-            $this->userPaths(),
-            $this->rolePaths(),
-            $this->reportPaths(),
-            $this->statsPaths(),
-            $this->notificationPaths(),
-            $this->messagePaths(),
-            $this->pointPaths(),
-            $this->dynamicContentPaths(),
-        );
+        return $this->generated()['paths'];
     }
 
-    // =========================================================================
-    // Resource path definitions
-    // =========================================================================
-
-    // -------------------------------------------------------------------------
-    // Contacts
-    // -------------------------------------------------------------------------
-
-    private function contactPaths(): array
+    /**
+     * Paths and tags are produced in a single pass and reused within the request.
+     *
+     * @return array{paths: array<string, array<string, mixed>>, tags: list<array{name: string, description: string}>}
+     */
+    private function generated(): array
     {
-        return [
-            '/contacts' => [
-                'get'  => $this->listOp('Contacts', 'List contacts', 'contacts', '#/components/schemas/Contact'),
-                'post' => $this->createOp('Contacts', 'Create a contact', 'contact', '#/components/schemas/Contact', '#/components/schemas/ContactInput'),
-            ],
-            '/contacts/batch/new' => [
-                'post' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Batch create contacts',
-                    'operationId' => 'batchCreateContacts',
-                    'requestBody' => $this->jsonBody('#/components/schemas/ContactInputList'),
-                    'responses'   => [
-                        '201' => $this->jsonResp('Created', '#/components/schemas/ContactBatchResponse'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/contacts/batch/edit' => [
-                'patch' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Batch update contacts',
-                    'operationId' => 'batchUpdateContacts',
-                    'requestBody' => $this->jsonBody('#/components/schemas/ContactInputList'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Updated', '#/components/schemas/ContactBatchResponse'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/contacts/batch/delete' => [
-                'delete' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Batch delete contacts',
-                    'operationId' => 'batchDeleteContacts',
-                    'requestBody' => [
-                        'required' => true,
-                        'content'  => ['application/json' => ['schema' => ['type' => 'object', 'properties' => ['ids' => ['type' => 'array', 'items' => ['type' => 'integer']]]]]],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Deleted'),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}' => [
-                'get'    => $this->getOneOp('Contacts', 'Get a contact', 'contact', '#/components/schemas/Contact'),
-                'patch'  => $this->updateOp('Contacts', 'Update a contact', 'contact', '#/components/schemas/Contact', '#/components/schemas/ContactInput'),
-                'delete' => $this->deleteOp('Contacts', 'Delete a contact'),
-            ],
-            '/contacts/{id}/notes' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List notes for a contact',
-                    'operationId' => 'getContactNotes',
-                    'parameters'  => array_merge([$this->idParam()], $this->paginationParams()),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/NoteListResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/events' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List events for a contact',
-                    'operationId' => 'getContactEvents',
-                    'parameters'  => array_merge(
-                        [$this->idParam()],
-                        $this->paginationParams(),
-                        [['name' => 'filters[search]', 'in' => 'query', 'schema' => ['type' => 'string']]]
-                    ),
-                    'responses' => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/ContactEventsResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/companies' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List companies for a contact',
-                    'operationId' => 'getContactCompanies',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/ContactCompaniesResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/segments' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List segments a contact belongs to',
-                    'operationId' => 'getContactSegments',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/ContactSegmentsResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/campaigns' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List campaigns a contact belongs to',
-                    'operationId' => 'getContactCampaigns',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/ContactCampaignsResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/tags' => [
-                'post' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Add tags to a contact',
-                    'operationId' => 'addTagsToContact',
-                    'parameters'  => [$this->idParam()],
-                    'requestBody' => $this->jsonBody('#/components/schemas/TagListInput'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Tags updated', '#/components/schemas/ContactResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-                'delete' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Remove tags from a contact',
-                    'operationId' => 'removeTagsFromContact',
-                    'parameters'  => [$this->idParam()],
-                    'requestBody' => $this->jsonBody('#/components/schemas/TagListInput'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Tags updated', '#/components/schemas/ContactResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/dnc/{channel}/add' => [
-                'post' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Add contact to Do Not Contact for a channel',
-                    'operationId' => 'addContactToDnc',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'channel', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string', 'enum' => ['email', 'sms', 'push']]],
-                    ],
-                    'requestBody' => [
-                        'content' => ['application/json' => ['schema' => ['type' => 'object', 'properties' => [
-                            'reason'   => ['type' => 'integer', 'description' => '1=Manual, 2=Bounce, 3=Unsubscribe'],
-                            'comments' => ['type' => 'string'],
-                        ]]]],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact updated', '#/components/schemas/ContactResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/dnc/{channel}/remove' => [
-                'post' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'Remove contact from Do Not Contact for a channel',
-                    'operationId' => 'removeContactFromDnc',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'channel', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string', 'enum' => ['email', 'sms', 'push']]],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact updated', '#/components/schemas/ContactResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/contacts/{id}/utmtags' => [
-                'get' => [
-                    'tags'        => ['Contacts'],
-                    'summary'     => 'List UTM tags for a contact',
-                    'operationId' => 'getContactUtmTags',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Companies
-    // -------------------------------------------------------------------------
-
-    private function companyPaths(): array
-    {
-        return [
-            '/companies' => [
-                'get'  => $this->listOp('Companies', 'List companies', 'companies', '#/components/schemas/Company'),
-                'post' => $this->createOp('Companies', 'Create a company', 'company', '#/components/schemas/Company', '#/components/schemas/CompanyInput'),
-            ],
-            '/companies/{id}' => [
-                'get'    => $this->getOneOp('Companies', 'Get a company', 'company', '#/components/schemas/Company'),
-                'patch'  => $this->updateOp('Companies', 'Update a company', 'company', '#/components/schemas/Company', '#/components/schemas/CompanyInput'),
-                'delete' => $this->deleteOp('Companies', 'Delete a company'),
-            ],
-            '/companies/{id}/contact/{contactId}/add' => [
-                'post' => [
-                    'tags'        => ['Companies'],
-                    'summary'     => 'Add a contact to a company',
-                    'operationId' => 'addContactToCompany',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'contactId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact added to company'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/companies/{id}/contact/{contactId}/remove' => [
-                'post' => [
-                    'tags'        => ['Companies'],
-                    'summary'     => 'Remove a contact from a company',
-                    'operationId' => 'removeContactFromCompany',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'contactId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact removed from company'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Segments
-    // -------------------------------------------------------------------------
-
-    private function segmentPaths(): array
-    {
-        return [
-            '/segments' => [
-                'get'  => $this->listOp('Segments', 'List segments', 'lists', '#/components/schemas/Segment'),
-                'post' => $this->createOp('Segments', 'Create a segment', 'list', '#/components/schemas/Segment', '#/components/schemas/SegmentInput'),
-            ],
-            '/segments/{id}' => [
-                'get'    => $this->getOneOp('Segments', 'Get a segment', 'list', '#/components/schemas/Segment'),
-                'patch'  => $this->updateOp('Segments', 'Update a segment', 'list', '#/components/schemas/Segment', '#/components/schemas/SegmentInput'),
-                'delete' => $this->deleteOp('Segments', 'Delete a segment'),
-            ],
-            '/segments/{id}/contacts/add' => [
-                'post' => [
-                    'tags'        => ['Segments'],
-                    'summary'     => 'Add contacts to a segment',
-                    'description' => 'Pass a `ids` array to add multiple contacts at once.',
-                    'operationId' => 'addContactsToSegment',
-                    'parameters'  => [$this->idParam()],
-                    'requestBody' => $this->jsonBody('#/components/schemas/ContactIdList'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Contacts added'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/segments/{id}/contacts/remove' => [
-                'post' => [
-                    'tags'        => ['Segments'],
-                    'summary'     => 'Remove contacts from a segment',
-                    'operationId' => 'removeContactsFromSegment',
-                    'parameters'  => [$this->idParam()],
-                    'requestBody' => $this->jsonBody('#/components/schemas/ContactIdList'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Contacts removed'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Campaigns
-    // -------------------------------------------------------------------------
-
-    private function campaignPaths(): array
-    {
-        return [
-            '/campaigns' => [
-                'get'  => $this->listOp('Campaigns', 'List campaigns', 'campaigns', '#/components/schemas/Campaign'),
-                'post' => $this->createOp('Campaigns', 'Create a campaign', 'campaign', '#/components/schemas/Campaign', '#/components/schemas/CampaignInput'),
-            ],
-            '/campaigns/{id}' => [
-                'get'    => $this->getOneOp('Campaigns', 'Get a campaign', 'campaign', '#/components/schemas/Campaign'),
-                'patch'  => $this->updateOp('Campaigns', 'Update a campaign', 'campaign', '#/components/schemas/Campaign', '#/components/schemas/CampaignInput'),
-                'delete' => $this->deleteOp('Campaigns', 'Delete a campaign'),
-            ],
-            '/campaigns/{id}/contact/{contactId}/add' => [
-                'post' => [
-                    'tags'        => ['Campaigns'],
-                    'summary'     => 'Add a contact to a campaign',
-                    'operationId' => 'addContactToCampaign',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'contactId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact added to campaign'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/campaigns/{id}/contact/{contactId}/remove' => [
-                'post' => [
-                    'tags'        => ['Campaigns'],
-                    'summary'     => 'Remove a contact from a campaign',
-                    'operationId' => 'removeContactFromCampaign',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'contactId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Contact removed from campaign'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/campaigns/{id}/events' => [
-                'get' => [
-                    'tags'        => ['Campaigns'],
-                    'summary'     => 'List events in a campaign',
-                    'operationId' => 'getCampaignEvents',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Emails
-    // -------------------------------------------------------------------------
-
-    private function emailPaths(): array
-    {
-        return [
-            '/emails' => [
-                'get'  => $this->listOp('Emails', 'List emails', 'emails', '#/components/schemas/Email'),
-                'post' => $this->createOp('Emails', 'Create an email', 'email', '#/components/schemas/Email', '#/components/schemas/EmailInput'),
-            ],
-            '/emails/{id}' => [
-                'get'    => $this->getOneOp('Emails', 'Get an email', 'email', '#/components/schemas/Email'),
-                'patch'  => $this->updateOp('Emails', 'Update an email', 'email', '#/components/schemas/Email', '#/components/schemas/EmailInput'),
-                'delete' => $this->deleteOp('Emails', 'Delete an email'),
-            ],
-            '/emails/{id}/send' => [
-                'post' => [
-                    'tags'        => ['Emails'],
-                    'summary'     => 'Send a list email to its assigned segments',
-                    'operationId' => 'sendEmail',
-                    'parameters'  => [$this->idParam()],
-                    'responses'   => [
-                        '200' => $this->jsonResp('Email queued for sending'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/emails/{id}/contact/{contactId}/send' => [
-                'post' => [
-                    'tags'        => ['Emails'],
-                    'summary'     => 'Send an email to a specific contact',
-                    'operationId' => 'sendEmailToContact',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'contactId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'requestBody' => [
-                        'content' => ['application/json' => ['schema' => ['type' => 'object', 'properties' => [
-                            'tokens' => ['type' => 'object', 'additionalProperties' => ['type' => 'string'], 'description' => 'Token replacements for the email body'],
-                        ]]]],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Email sent'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Forms
-    // -------------------------------------------------------------------------
-
-    private function formPaths(): array
-    {
-        return [
-            '/forms' => [
-                'get'  => $this->listOp('Forms', 'List forms', 'forms', '#/components/schemas/Form'),
-                'post' => $this->createOp('Forms', 'Create a form', 'form', '#/components/schemas/Form', '#/components/schemas/FormInput'),
-            ],
-            '/forms/{id}' => [
-                'get'    => $this->getOneOp('Forms', 'Get a form', 'form', '#/components/schemas/Form'),
-                'patch'  => $this->updateOp('Forms', 'Update a form', 'form', '#/components/schemas/Form', '#/components/schemas/FormInput'),
-                'delete' => $this->deleteOp('Forms', 'Delete a form'),
-            ],
-            '/forms/{id}/submissions' => [
-                'get' => [
-                    'tags'        => ['Forms'],
-                    'summary'     => 'List submissions for a form',
-                    'operationId' => 'getFormSubmissions',
-                    'parameters'  => array_merge([$this->idParam()], $this->paginationParams()),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/FormSubmissionsResponse'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-            '/forms/{id}/submissions/{submissionId}' => [
-                'get' => [
-                    'tags'        => ['Forms'],
-                    'summary'     => 'Get a single form submission',
-                    'operationId' => 'getFormSubmission',
-                    'parameters'  => [
-                        $this->idParam(),
-                        ['name' => 'submissionId', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'integer']],
-                    ],
-                    'responses' => [
-                        '200' => $this->jsonResp('Success'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Landing Pages
-    // -------------------------------------------------------------------------
-
-    private function pagePaths(): array
-    {
-        return [
-            '/pages' => [
-                'get'  => $this->listOp('Landing Pages', 'List landing pages', 'pages', '#/components/schemas/Page'),
-                'post' => $this->createOp('Landing Pages', 'Create a landing page', 'page', '#/components/schemas/Page', '#/components/schemas/PageInput'),
-            ],
-            '/pages/{id}' => [
-                'get'    => $this->getOneOp('Landing Pages', 'Get a landing page', 'page', '#/components/schemas/Page'),
-                'patch'  => $this->updateOp('Landing Pages', 'Update a landing page', 'page', '#/components/schemas/Page', '#/components/schemas/PageInput'),
-                'delete' => $this->deleteOp('Landing Pages', 'Delete a landing page'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Assets
-    // -------------------------------------------------------------------------
-
-    private function assetPaths(): array
-    {
-        return [
-            '/assets' => [
-                'get'  => $this->listOp('Assets', 'List assets', 'assets', '#/components/schemas/Asset'),
-                'post' => $this->createOp('Assets', 'Create an asset', 'asset', '#/components/schemas/Asset', '#/components/schemas/AssetInput'),
-            ],
-            '/assets/{id}' => [
-                'get'    => $this->getOneOp('Assets', 'Get an asset', 'asset', '#/components/schemas/Asset'),
-                'patch'  => $this->updateOp('Assets', 'Update an asset', 'asset', '#/components/schemas/Asset', '#/components/schemas/AssetInput'),
-                'delete' => $this->deleteOp('Assets', 'Delete an asset'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Tags
-    // -------------------------------------------------------------------------
-
-    private function tagPaths(): array
-    {
-        return [
-            '/tags' => [
-                'get'  => $this->listOp('Tags', 'List tags', 'tags', '#/components/schemas/Tag'),
-                'post' => $this->createOp('Tags', 'Create a tag', 'tag', '#/components/schemas/Tag', '#/components/schemas/TagInput'),
-            ],
-            '/tags/{id}' => [
-                'get'    => $this->getOneOp('Tags', 'Get a tag', 'tag', '#/components/schemas/Tag'),
-                'patch'  => $this->updateOp('Tags', 'Update a tag', 'tag', '#/components/schemas/Tag', '#/components/schemas/TagInput'),
-                'delete' => $this->deleteOp('Tags', 'Delete a tag'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Categories
-    // -------------------------------------------------------------------------
-
-    private function categoryPaths(): array
-    {
-        return [
-            '/categories' => [
-                'get'  => $this->listOp('Categories', 'List categories', 'categories', '#/components/schemas/Category'),
-                'post' => $this->createOp('Categories', 'Create a category', 'category', '#/components/schemas/Category', '#/components/schemas/CategoryInput'),
-            ],
-            '/categories/{id}' => [
-                'get'    => $this->getOneOp('Categories', 'Get a category', 'category', '#/components/schemas/Category'),
-                'patch'  => $this->updateOp('Categories', 'Update a category', 'category', '#/components/schemas/Category', '#/components/schemas/CategoryInput'),
-                'delete' => $this->deleteOp('Categories', 'Delete a category'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Custom Fields
-    // -------------------------------------------------------------------------
-
-    private function fieldPaths(): array
-    {
-        return [
-            '/fields/contact' => [
-                'get' => [
-                    'tags'        => ['Custom Fields'],
-                    'summary'     => 'List contact custom fields',
-                    'operationId' => 'getContactFields',
-                    'parameters'  => $this->paginationParams(),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/FieldListResponse'),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-                'post' => [
-                    'tags'        => ['Custom Fields'],
-                    'summary'     => 'Create a contact custom field',
-                    'operationId' => 'createContactField',
-                    'requestBody' => $this->jsonBody('#/components/schemas/FieldInput'),
-                    'responses'   => [
-                        '201' => $this->jsonResp('Created', '#/components/schemas/FieldResponse'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/fields/contact/{id}' => [
-                'get'    => $this->getOneOp('Custom Fields', 'Get a contact custom field', 'field', '#/components/schemas/Field'),
-                'patch'  => $this->updateOp('Custom Fields', 'Update a contact custom field', 'field', '#/components/schemas/Field', '#/components/schemas/FieldInput'),
-                'delete' => $this->deleteOp('Custom Fields', 'Delete a contact custom field'),
-            ],
-            '/fields/company' => [
-                'get' => [
-                    'tags'        => ['Custom Fields'],
-                    'summary'     => 'List company custom fields',
-                    'operationId' => 'getCompanyFields',
-                    'parameters'  => $this->paginationParams(),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/FieldListResponse'),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-                'post' => [
-                    'tags'        => ['Custom Fields'],
-                    'summary'     => 'Create a company custom field',
-                    'operationId' => 'createCompanyField',
-                    'requestBody' => $this->jsonBody('#/components/schemas/FieldInput'),
-                    'responses'   => [
-                        '201' => $this->jsonResp('Created', '#/components/schemas/FieldResponse'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/fields/company/{id}' => [
-                'get'    => $this->getOneOp('Custom Fields', 'Get a company custom field', 'field', '#/components/schemas/Field'),
-                'patch'  => $this->updateOp('Custom Fields', 'Update a company custom field', 'field', '#/components/schemas/Field', '#/components/schemas/FieldInput'),
-                'delete' => $this->deleteOp('Custom Fields', 'Delete a company custom field'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Notes
-    // -------------------------------------------------------------------------
-
-    private function notePaths(): array
-    {
-        return [
-            '/notes' => [
-                'get'  => $this->listOp('Notes', 'List notes', 'notes', '#/components/schemas/Note'),
-                'post' => $this->createOp('Notes', 'Create a note', 'note', '#/components/schemas/Note', '#/components/schemas/NoteInput'),
-            ],
-            '/notes/{id}' => [
-                'get'    => $this->getOneOp('Notes', 'Get a note', 'note', '#/components/schemas/Note'),
-                'patch'  => $this->updateOp('Notes', 'Update a note', 'note', '#/components/schemas/Note', '#/components/schemas/NoteInput'),
-                'delete' => $this->deleteOp('Notes', 'Delete a note'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Users
-    // -------------------------------------------------------------------------
-
-    private function userPaths(): array
-    {
-        return [
-            '/users' => [
-                'get'  => $this->listOp('Users', 'List users', 'users', '#/components/schemas/User'),
-                'post' => $this->createOp('Users', 'Create a user', 'user', '#/components/schemas/User', '#/components/schemas/UserInput'),
-            ],
-            '/users/self' => [
-                'get' => [
-                    'tags'        => ['Users'],
-                    'summary'     => 'Get the currently authenticated user',
-                    'operationId' => 'getSelf',
-                    'responses'   => [
-                        '200' => $this->jsonResp('Success', '#/components/schemas/UserResponse'),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-                'patch' => [
-                    'tags'        => ['Users'],
-                    'summary'     => 'Update the currently authenticated user',
-                    'operationId' => 'updateSelf',
-                    'requestBody' => $this->jsonBody('#/components/schemas/UserInput'),
-                    'responses'   => [
-                        '200' => $this->jsonResp('Updated', '#/components/schemas/UserResponse'),
-                        '400' => $this->ref400(),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/users/{id}' => [
-                'get'    => $this->getOneOp('Users', 'Get a user', 'user', '#/components/schemas/User'),
-                'patch'  => $this->updateOp('Users', 'Update a user', 'user', '#/components/schemas/User', '#/components/schemas/UserInput'),
-                'delete' => $this->deleteOp('Users', 'Delete a user'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Roles
-    // -------------------------------------------------------------------------
-
-    private function rolePaths(): array
-    {
-        return [
-            '/roles' => [
-                'get'  => $this->listOp('Roles', 'List roles', 'roles', '#/components/schemas/Role'),
-                'post' => $this->createOp('Roles', 'Create a role', 'role', '#/components/schemas/Role', '#/components/schemas/RoleInput'),
-            ],
-            '/roles/{id}' => [
-                'get'    => $this->getOneOp('Roles', 'Get a role', 'role', '#/components/schemas/Role'),
-                'patch'  => $this->updateOp('Roles', 'Update a role', 'role', '#/components/schemas/Role', '#/components/schemas/RoleInput'),
-                'delete' => $this->deleteOp('Roles', 'Delete a role'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Reports
-    // -------------------------------------------------------------------------
-
-    private function reportPaths(): array
-    {
-        return [
-            '/reports' => [
-                'get' => $this->listOp('Reports', 'List reports', 'reports', '#/components/schemas/Report'),
-            ],
-            '/reports/{id}' => [
-                'get' => $this->getOneOp('Reports', 'Get a report', 'report', '#/components/schemas/Report'),
-            ],
-            '/reports/{id}/run' => [
-                'get' => [
-                    'tags'        => ['Reports'],
-                    'summary'     => 'Run a report and get its data',
-                    'operationId' => 'runReport',
-                    'parameters'  => array_merge(
-                        [$this->idParam()],
-                        [
-                            ['name' => 'dateFrom', 'in' => 'query', 'schema' => ['type' => 'string', 'format' => 'date']],
-                            ['name' => 'dateTo', 'in' => 'query', 'schema' => ['type' => 'string', 'format' => 'date']],
-                        ],
-                        $this->paginationParams()
-                    ),
-                    'responses' => [
-                        '200' => $this->jsonResp('Report data'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Stats
-    // -------------------------------------------------------------------------
-
-    private function statsPaths(): array
-    {
-        return [
-            '/stats' => [
-                'get' => [
-                    'tags'        => ['Stats'],
-                    'summary'     => 'List available stat tables',
-                    'operationId' => 'getStatTables',
-                    'responses'   => [
-                        '200' => $this->jsonResp('List of table names'),
-                        '401' => $this->ref401(),
-                    ],
-                ],
-            ],
-            '/stats/{table}' => [
-                'get' => [
-                    'tags'        => ['Stats'],
-                    'summary'     => 'Get stats from a specific table',
-                    'operationId' => 'getStats',
-                    'parameters'  => array_merge(
-                        [['name' => 'table', 'in' => 'path', 'required' => true, 'schema' => ['type' => 'string'], 'description' => 'Table name (e.g. email_stats, lead_event_log)']],
-                        $this->paginationParams(),
-                        [
-                            ['name' => 'dateFrom', 'in' => 'query', 'schema' => ['type' => 'string', 'format' => 'date-time']],
-                            ['name' => 'dateTo', 'in' => 'query', 'schema' => ['type' => 'string', 'format' => 'date-time']],
-                        ]
-                    ),
-                    'responses' => [
-                        '200' => $this->jsonResp('Stats data'),
-                        '401' => $this->ref401(),
-                        '404' => $this->ref404(),
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Notifications
-    // -------------------------------------------------------------------------
-
-    private function notificationPaths(): array
-    {
-        return [
-            '/notifications' => [
-                'get'  => $this->listOp('Notifications', 'List web push notifications', 'notifications', '#/components/schemas/Notification'),
-                'post' => $this->createOp('Notifications', 'Create a web push notification', 'notification', '#/components/schemas/Notification', '#/components/schemas/NotificationInput'),
-            ],
-            '/notifications/{id}' => [
-                'get'    => $this->getOneOp('Notifications', 'Get a notification', 'notification', '#/components/schemas/Notification'),
-                'patch'  => $this->updateOp('Notifications', 'Update a notification', 'notification', '#/components/schemas/Notification', '#/components/schemas/NotificationInput'),
-                'delete' => $this->deleteOp('Notifications', 'Delete a notification'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Messages
-    // -------------------------------------------------------------------------
-
-    private function messagePaths(): array
-    {
-        return [
-            '/messages' => [
-                'get'  => $this->listOp('Messages', 'List marketing messages', 'messages', '#/components/schemas/Message'),
-                'post' => $this->createOp('Messages', 'Create a marketing message', 'message', '#/components/schemas/Message', '#/components/schemas/MessageInput'),
-            ],
-            '/messages/{id}' => [
-                'get'    => $this->getOneOp('Messages', 'Get a marketing message', 'message', '#/components/schemas/Message'),
-                'patch'  => $this->updateOp('Messages', 'Update a marketing message', 'message', '#/components/schemas/Message', '#/components/schemas/MessageInput'),
-                'delete' => $this->deleteOp('Messages', 'Delete a marketing message'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Points
-    // -------------------------------------------------------------------------
-
-    private function pointPaths(): array
-    {
-        return [
-            '/points' => [
-                'get'  => $this->listOp('Points', 'List point actions', 'points', '#/components/schemas/Point'),
-                'post' => $this->createOp('Points', 'Create a point action', 'point', '#/components/schemas/Point', '#/components/schemas/PointInput'),
-            ],
-            '/points/{id}' => [
-                'get'    => $this->getOneOp('Points', 'Get a point action', 'point', '#/components/schemas/Point'),
-                'patch'  => $this->updateOp('Points', 'Update a point action', 'point', '#/components/schemas/Point', '#/components/schemas/PointInput'),
-                'delete' => $this->deleteOp('Points', 'Delete a point action'),
-            ],
-            '/points/triggers' => [
-                'get'  => $this->listOp('Points', 'List point triggers', 'triggers', '#/components/schemas/PointTrigger'),
-                'post' => $this->createOp('Points', 'Create a point trigger', 'trigger', '#/components/schemas/PointTrigger', '#/components/schemas/PointTriggerInput'),
-            ],
-            '/points/triggers/{id}' => [
-                'get'    => $this->getOneOp('Points', 'Get a point trigger', 'trigger', '#/components/schemas/PointTrigger'),
-                'patch'  => $this->updateOp('Points', 'Update a point trigger', 'trigger', '#/components/schemas/PointTrigger', '#/components/schemas/PointTriggerInput'),
-                'delete' => $this->deleteOp('Points', 'Delete a point trigger'),
-            ],
-        ];
-    }
-
-    // -------------------------------------------------------------------------
-    // Dynamic Content
-    // -------------------------------------------------------------------------
-
-    private function dynamicContentPaths(): array
-    {
-        return [
-            '/dynamiccontents' => [
-                'get'  => $this->listOp('Dynamic Content', 'List dynamic content blocks', 'dynamicContents', '#/components/schemas/DynamicContent'),
-                'post' => $this->createOp('Dynamic Content', 'Create a dynamic content block', 'dynamicContent', '#/components/schemas/DynamicContent', '#/components/schemas/DynamicContentInput'),
-            ],
-            '/dynamiccontents/{id}' => [
-                'get'    => $this->getOneOp('Dynamic Content', 'Get a dynamic content block', 'dynamicContent', '#/components/schemas/DynamicContent'),
-                'patch'  => $this->updateOp('Dynamic Content', 'Update a dynamic content block', 'dynamicContent', '#/components/schemas/DynamicContent', '#/components/schemas/DynamicContentInput'),
-                'delete' => $this->deleteOp('Dynamic Content', 'Delete a dynamic content block'),
-            ],
-        ];
-    }
-
-    // =========================================================================
-    // CRUD operation helpers
-    // =========================================================================
-
-    private function listOp(string $tag, string $summary, string $resourceKey, string $schemaRef): array
-    {
-        return [
-            'tags'        => [$tag],
-            'summary'     => $summary,
-            'operationId' => 'list' . $this->camel($resourceKey),
-            'parameters'  => $this->paginationParams(),
-            'responses'   => [
-                '200' => [
-                    'description' => 'Success',
-                    'content'     => ['application/json' => ['schema' => [
-                        'type'       => 'object',
-                        'properties' => [
-                            'total'       => ['type' => 'string', 'description' => 'Total number of records matching the query'],
-                            $resourceKey  => [
-                                'type'                 => 'object',
-                                'description'          => 'Map of string ID → resource object',
-                                'additionalProperties' => ['$ref' => $schemaRef],
-                            ],
-                        ],
-                    ]]],
-                ],
-                '401' => $this->ref401(),
-                '403' => $this->ref403(),
-            ],
-        ];
-    }
-
-    private function createOp(string $tag, string $summary, string $resourceKey, string $schemaRef, string $inputRef): array
-    {
-        return [
-            'tags'        => [$tag],
-            'summary'     => $summary,
-            'operationId' => 'create' . $this->camel($resourceKey),
-            'requestBody' => $this->jsonBody($inputRef),
-            'responses'   => [
-                '201' => [
-                    'description' => 'Created',
-                    'content'     => ['application/json' => ['schema' => [
-                        'type'       => 'object',
-                        'properties' => [$resourceKey => ['$ref' => $schemaRef]],
-                    ]]],
-                ],
-                '400' => $this->ref400(),
-                '401' => $this->ref401(),
-                '403' => $this->ref403(),
-                '422' => $this->ref422(),
-            ],
-        ];
-    }
-
-    private function getOneOp(string $tag, string $summary, string $resourceKey, string $schemaRef): array
-    {
-        return [
-            'tags'        => [$tag],
-            'summary'     => $summary,
-            'operationId' => 'get' . $this->camel($resourceKey),
-            'parameters'  => [$this->idParam()],
-            'responses'   => [
-                '200' => [
-                    'description' => 'Success',
-                    'content'     => ['application/json' => ['schema' => [
-                        'type'       => 'object',
-                        'properties' => [$resourceKey => ['$ref' => $schemaRef]],
-                    ]]],
-                ],
-                '401' => $this->ref401(),
-                '403' => $this->ref403(),
-                '404' => $this->ref404(),
-            ],
-        ];
-    }
-
-    private function updateOp(string $tag, string $summary, string $resourceKey, string $schemaRef, string $inputRef): array
-    {
-        return [
-            'tags'        => [$tag],
-            'summary'     => $summary,
-            'operationId' => 'update' . $this->camel($resourceKey),
-            'parameters'  => [$this->idParam()],
-            'requestBody' => $this->jsonBody($inputRef),
-            'responses'   => [
-                '200' => [
-                    'description' => 'Updated',
-                    'content'     => ['application/json' => ['schema' => [
-                        'type'       => 'object',
-                        'properties' => [$resourceKey => ['$ref' => $schemaRef]],
-                    ]]],
-                ],
-                '400' => $this->ref400(),
-                '401' => $this->ref401(),
-                '403' => $this->ref403(),
-                '404' => $this->ref404(),
-                '422' => $this->ref422(),
-            ],
-        ];
-    }
-
-    private function deleteOp(string $tag, string $summary): array
-    {
-        return [
-            'tags'        => [$tag],
-            'summary'     => $summary,
-            'operationId' => 'delete' . $this->camel(substr($summary, strrpos($summary, ' ') + 1)),
-            'parameters'  => [$this->idParam()],
-            'responses'   => [
-                '200' => ['description' => 'Deleted successfully'],
-                '401' => $this->ref401(),
-                '403' => $this->ref403(),
-                '404' => $this->ref404(),
-            ],
-        ];
+        return $this->generated ??= $this->pathBuilder->build(array_keys($this->buildSchemas()));
     }
 
     // =========================================================================
@@ -1182,11 +216,11 @@ MD,
                     'authorizationCode' => [
                         'authorizationUrl' => $siteUrl . '/oauth/v2/authorize',
                         'tokenUrl'         => $siteUrl . '/oauth/v2/token',
-                        'scopes'           => [],
+                        'scopes'           => new \stdClass(), // must serialise as a JSON object, not []
                     ],
                     'clientCredentials' => [
                         'tokenUrl' => $siteUrl . '/oauth/v2/token',
-                        'scopes'   => [],
+                        'scopes'   => new \stdClass(), // must serialise as a JSON object, not []
                     ],
                 ],
             ],
@@ -2152,84 +1186,5 @@ MD,
     private function helperSchemas(): array
     {
         return [];
-    }
-
-    // =========================================================================
-    // Small helpers
-    // =========================================================================
-
-    /** Standard pagination query parameters (inline, not $ref) */
-    private function paginationParams(): array
-    {
-        return [
-            ['name' => 'start',         'in' => 'query', 'schema' => ['type' => 'integer', 'default' => 0]],
-            ['name' => 'limit',         'in' => 'query', 'schema' => ['type' => 'integer', 'default' => 30, 'maximum' => 1000]],
-            ['name' => 'search',        'in' => 'query', 'schema' => ['type' => 'string']],
-            ['name' => 'orderBy',       'in' => 'query', 'schema' => ['type' => 'string']],
-            ['name' => 'orderByDir',    'in' => 'query', 'schema' => ['type' => 'string', 'enum' => ['ASC', 'DESC'], 'default' => 'ASC']],
-            ['name' => 'publishedOnly', 'in' => 'query', 'schema' => ['type' => 'boolean', 'default' => false]],
-            ['name' => 'minimal',       'in' => 'query', 'schema' => ['type' => 'boolean', 'default' => false]],
-        ];
-    }
-
-    private function idParam(): array
-    {
-        return [
-            'name'     => 'id',
-            'in'       => 'path',
-            'required' => true,
-            'schema'   => ['type' => 'integer', 'minimum' => 1],
-        ];
-    }
-
-    private function jsonBody(string $schemaRef): array
-    {
-        return [
-            'required' => true,
-            'content'  => ['application/json' => ['schema' => ['$ref' => $schemaRef]]],
-        ];
-    }
-
-    private function jsonResp(string $description, ?string $schemaRef = null): array
-    {
-        if ($schemaRef === null) {
-            return ['description' => $description];
-        }
-
-        return [
-            'description' => $description,
-            'content'     => ['application/json' => ['schema' => ['$ref' => $schemaRef]]],
-        ];
-    }
-
-    private function ref400(): array
-    {
-        return ['$ref' => '#/components/responses/BadRequest'];
-    }
-
-    private function ref401(): array
-    {
-        return ['$ref' => '#/components/responses/Unauthorized'];
-    }
-
-    private function ref403(): array
-    {
-        return ['$ref' => '#/components/responses/Forbidden'];
-    }
-
-    private function ref404(): array
-    {
-        return ['$ref' => '#/components/responses/NotFound'];
-    }
-
-    private function ref422(): array
-    {
-        return ['$ref' => '#/components/responses/UnprocessableEntity'];
-    }
-
-    /** CamelCase a resource key for operationId generation */
-    private function camel(string $value): string
-    {
-        return ucfirst(str_replace(['-', '_'], ' ', $value));
     }
 }
